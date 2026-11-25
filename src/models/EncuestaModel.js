@@ -63,6 +63,18 @@ class EncuestaModel {
     return result.recordset[0] || null;
   }
 
+  static async softDelete(idEncuesta) {
+    const pool = await getConnectionPool();
+    const result = await pool.request()
+      .input('id_encuesta', sql.Int, idEncuesta)
+      .query(`
+        UPDATE Encuestas
+        SET estado = 'eliminada', fecha_actualizacion = SYSUTCDATETIME()
+        WHERE id_encuesta = @id_encuesta AND estado <> 'eliminada'
+      `);
+    return result.rowsAffected[0] > 0;
+  }
+
   static async deletePermanent(idEncuesta) {
     const pool = await getConnectionPool();
     const transaction = new sql.Transaction(pool);

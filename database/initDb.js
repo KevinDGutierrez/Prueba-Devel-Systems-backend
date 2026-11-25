@@ -1,145 +1,59 @@
-const sql = require('mssql/msnodesqlv8');
+const { runMigrations } = require('./runner');
+const { getConnectionPool, sql } = require('../src/config/database');
 const argon2 = require('argon2');
-require('dotenv').config();
 
-async function initDatabase() {
-  const masterConnString = `Driver={ODBC Driver 18 for SQL Server};Server=${process.env.DB_SERVER || '(local)'};Database=master;Trusted_Connection=yes;TrustServerCertificate=yes;`;
-  const targetDb = process.env.DB_NAME || 'EncuestasAcme';
+async function seedSuperAdminIfEmpty(pool) {
+  const count = await pool.request().query('SELECT COUNT(*) AS total FROM Usuarios');
+  const total = count.recordset[0].total;
 
-  let masterPool = null;
-  try {
-    masterPool = await new sql.ConnectionPool({
-      connectionString: masterConnString,
-      driver: 'msnodesqlv8'
-    }).connect();
+  if (total > 0) {
+    console.log('[Init] Usuarios existentes detectados, no se crea administrador automático.');
+    return;
+  }
 
-    const dbCheck = await masterPool.request()
-      .input('dbName', sql.NVarChar(128), targetDb)
-      .query('SELECT database_id FROM sys.databases WHERE name = @dbName');
+  const email = process.env.ADMIN_EMAIL;
+  const password = process.env.ADMIN_PASSWORD;
+  const nombre = process.env.ADMIN_NAME || 'Administrador ACME';
+  const username = process.env.ADMIN_USERNAME || (email ? email.split('@')[0] : null);
 
-    if (dbCheck.recordset.length === 0) {
-      await masterPool.request().query(`CREATE DATABASE [${targetDb}]`);
-      console.log(`[InitDB] Base de datos "${targetDb}" creada automáticamente.`);
-    }
+  if (!email || !password || !username) {
+    console.warn('[Init] ADVERTENCIA: No hay usuarios y ADMIN_EMAIL, ADMIN_PASSWORD o ADMIN_USERNAME no están configuradas.');
+    console.warn('[Init] Configura esas variables en .env para crear el Super Admin automáticamente.');
+    return;
+  }
 
-    await masterPool.close();
-    masterPool = null;
+  console.log('[Init] Tabla Usuarios vacía. Creando Super Admin inicial...');
+  const hash = await argon2.hash(password, { type: argon2.argon2id });
 
-    const dbConnString = `Driver={ODBC Driver 18 for SQL Server};Server=${process.env.DB_SERVER || '(local)'};Database=${targetDb};Trusted_Connection=yes;TrustServerCertificate=yes;`;
-    const appPool = await new sql.ConnectionPool({
-      connectionString: dbConnString,
-      driver: 'msnodesqlv8'
-    }).connect();
-
-    await appPool.request().query(`
-      IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Usuarios')
-      BEGIN
-        CREATE TABLE Usuarios (
-          id_usuario INT IDENTITY(1,1) PRIMARY KEY,
-          nombre_completo NVARCHAR(150) NOT NULL,
-          email NVARCHAR(150) NOT NULL UNIQUE,
-          password_hash NVARCHAR(255) NOT NULL,
-          rol VARCHAR(20) NOT NULL DEFAULT 'Super Admin',
-          activo BIT NOT NULL DEFAULT 1,
-          fecha_creacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-          fecha_actualizacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-        );
-      END
-
-      IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Encuestas')
-      BEGIN
-        CREATE TABLE Encuestas (
-          id_encuesta INT IDENTITY(1,1) PRIMARY KEY,
-          uuid_publico VARCHAR(64) NOT NULL UNIQUE,
-          id_usuario_creador INT NOT NULL,
-          titulo NVARCHAR(200) NOT NULL,
-          descripcion NVARCHAR(1000) NULL,
-          estado VARCHAR(20) NOT NULL DEFAULT 'activa',
-          version INT NOT NULL DEFAULT 1,
-          fecha_creacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-          fecha_actualizacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-          CONSTRAINT FK_Encuestas_Usuarios FOREIGN KEY (id_usuario_creador) REFERENCES Usuarios(id_usuario)
-        );
-      END
-
-      IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CamposEncuesta')
-      BEGIN
-        CREATE TABLE CamposEncuesta (
-          id_campo INT IDENTITY(1,1) PRIMARY KEY,
-          id_encuesta INT NOT NULL,
-          nombre_campo VARCHAR(100) NOT NULL,
-          titulo_etiqueta NVARCHAR(250) NOT NULL,
-          tipo_campo VARCHAR(20) NOT NULL,
-          es_requerido BIT NOT NULL DEFAULT 1,
-          orden INT NOT NULL DEFAULT 1,
-          activo BIT NOT NULL DEFAULT 1,
-          fecha_creacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-          CONSTRAINT FK_CamposEncuesta_Encuestas FOREIGN KEY (id_encuesta) REFERENCES Encuestas(id_encuesta)
-        );
-      END
-
-      IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Respuestas')
-      BEGIN
-        CREATE TABLE Respuestas (
-          id_respuesta BIGINT IDENTITY(1,1) PRIMARY KEY,
-          id_encuesta INT NOT NULL,
-          fecha_respuesta DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-          direccion_ip VARCHAR(45) NULL,
-          user_agent NVARCHAR(500) NULL,
-          CONSTRAINT FK_Respuestas_Encuestas FOREIGN KEY (id_encuesta) REFERENCES Encuestas(id_encuesta)
-        );
-      END
-
-      IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ValoresRespuesta')
-      BEGIN
-        CREATE TABLE ValoresRespuesta (
-          id_valor BIGINT IDENTITY(1,1) PRIMARY KEY,
-          id_respuesta BIGINT NOT NULL,
-          id_campo INT NOT NULL,
-          valor_texto NVARCHAR(MAX) NULL,
-          valor_numero DECIMAL(18, 4) NULL,
-          valor_fecha DATE NULL,
-          CONSTRAINT FK_ValoresRespuesta_Respuestas FOREIGN KEY (id_respuesta) REFERENCES Respuestas(id_respuesta) ON DELETE CASCADE,
-          CONSTRAINT FK_ValoresRespuesta_CamposEncuesta FOREIGN KEY (id_campo) REFERENCES CamposEncuesta(id_campo)
-        );
-      END
+  await pool.request()
+    .input('nombre', sql.NVarChar(150), nombre)
+    .input('username', sql.VarChar(80), username.trim().toLowerCase())
+    .input('email', sql.NVarChar(150), email.trim().toLowerCase())
+    .input('hash', sql.NVarChar(255), hash)
+    .input('rol', sql.VarChar(20), 'Super Admin')
+    .query(`
+      INSERT INTO Usuarios (nombre_completo, username, email, password_hash, rol, activo)
+      VALUES (@nombre, @username, @email, @hash, @rol, 1)
     `);
 
-    const adminCheck = await appPool.request()
-      .input('email', sql.NVarChar(150), 'admin@acme.com')
-      .query('SELECT id_usuario FROM Usuarios WHERE email = @email');
-
-    if (adminCheck.recordset.length === 0) {
-      const hashSuper = await argon2.hash('Admin123*!', { type: argon2.argon2id });
-      const hashAdmin = await argon2.hash('Admin2026*!', { type: argon2.argon2id });
-      const hashUser = await argon2.hash('User2026*!', { type: argon2.argon2id });
-
-      await appPool.request()
-        .input('nombre', sql.NVarChar(150), 'Super Administrador')
-        .input('email', sql.NVarChar(150), 'admin@acme.com')
-        .input('hash', sql.NVarChar(255), hashSuper)
-        .input('rol', sql.VarChar(20), 'Super Admin')
-        .query('INSERT INTO Usuarios (nombre_completo, email, password_hash, rol, activo) VALUES (@nombre, @email, @hash, @rol, 1)');
-
-      await appPool.request()
-        .input('nombre', sql.NVarChar(150), 'Admin General')
-        .input('email', sql.NVarChar(150), 'admin.encuestas@acme.com')
-        .input('hash', sql.NVarChar(255), hashAdmin)
-        .input('rol', sql.VarChar(20), 'Admin')
-        .query('INSERT INTO Usuarios (nombre_completo, email, password_hash, rol, activo) VALUES (@nombre, @email, @hash, @rol, 1)');
-
-      await appPool.request()
-        .input('nombre', sql.NVarChar(150), 'Colaborador Regular')
-        .input('email', sql.NVarChar(150), 'colaborador@acme.com')
-        .input('hash', sql.NVarChar(255), hashUser)
-        .input('rol', sql.VarChar(20), 'Usuarios')
-        .query('INSERT INTO Usuarios (nombre_completo, email, password_hash, rol, activo) VALUES (@nombre, @email, @hash, @rol, 1)');
-    }
-
-    await appPool.close();
-  } catch (err) {
-    if (masterPool) await masterPool.close();
-  }
+  console.log(`[Init] Super Admin creado con Argon2id: ${email} / username: ${username}`);
 }
 
-module.exports = initDatabase;
+async function initDatabase() {
+  console.log('[Init] Verificando base de datos...');
+  const result = await runMigrations();
+  console.log(`[Init] Base de datos: ${result.database}`);
+
+  if (result.executed.length > 0) {
+    console.log(`[Init] Migraciones aplicadas: ${result.executed.join(', ')}`);
+  } else {
+    console.log('[Init] Esquema al día, no hay migraciones pendientes.');
+  }
+
+  const pool = await getConnectionPool();
+  await seedSuperAdminIfEmpty(pool);
+
+  return result;
+}
+
+module.exports = { initDatabase };

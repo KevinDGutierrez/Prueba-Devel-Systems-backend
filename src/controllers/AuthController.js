@@ -1,8 +1,14 @@
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const UsuarioModel = require('../models/UsuarioModel');
 require('dotenv').config();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'acme_surveys_dev_secret_jwt_key_devel_systems_2026';
+function getJwtSecret() {
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET no configurado');
+  }
+  return process.env.JWT_SECRET;
+}
 const JWT_EXPIRES_IN = '24h';
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
@@ -25,17 +31,18 @@ function registerFailedAttempt(key) {
 class AuthController {
   static async login(req, res, next) {
     try {
-      const { email, password } = req.body;
+      const identifier = req.body.usuario || req.body.email;
+      const { password } = req.body;
 
-      if (!email || !password) {
+      if (!identifier || !password) {
         return res.status(400).json({
           success: false,
-          message: 'Debe ingresar email y contraseña'
+          message: 'Debe ingresar usuario o correo y contraseña'
         });
       }
 
-      const normalizedEmail = email.trim().toLowerCase();
-      const attemptKey = getAttemptKey(req, normalizedEmail);
+      const normalizedIdentifier = String(identifier).trim().toLowerCase();
+      const attemptKey = getAttemptKey(req, normalizedIdentifier);
       const attemptRecord = loginAttempts.get(attemptKey);
 
       if (attemptRecord?.lockedUntil && Date.now() < attemptRecord.lockedUntil) {
@@ -50,7 +57,7 @@ class AuthController {
         loginAttempts.delete(attemptKey);
       }
 
-      const usuario = await UsuarioModel.findByEmail(normalizedEmail);
+      const usuario = await UsuarioModel.findByUsernameOrEmail(normalizedIdentifier);
       if (!usuario) {
         const failed = registerFailedAttempt(attemptKey);
         if (failed.lockedUntil) {
@@ -91,17 +98,43 @@ class AuthController {
 
       const token = jwt.sign(
         { sub: usuario.id_usuario },
-        JWT_SECRET,
+        getJwtSecret(),
         { expiresIn: JWT_EXPIRES_IN }
       );
 
+      const csrfToken = crypto.randomBytes(32).toString('hex');
+      const isProd = process.env.NODE_ENV === 'production';
+
+      res.cookie('acme_token', token, {
+        httpOnly: true,
+        secure: isProd,
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000,
+        path: '/'
+      });
+
+      res.cookie('acme_csrf', csrfToken, {
+        httpOnly: false,
+        secure: isProd,
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000,
+        path: '/'
+      });
+
       res.json({
         success: true,
-        token
+        csrfToken
       });
     } catch (error) {
       next(error);
     }
+  }
+
+  static async logout(req, res) {
+    const isProd = process.env.NODE_ENV === 'production';
+    res.clearCookie('acme_token', { httpOnly: true, secure: isProd, sameSite: 'lax', path: '/' });
+    res.clearCookie('acme_csrf', { httpOnly: false, secure: isProd, sameSite: 'lax', path: '/' });
+    res.json({ success: true });
   }
 
   static async me(req, res) {
@@ -140,10 +173,15 @@ class AuthController {
 
   static async crearUsuario(req, res, next) {
     try {
-      const { nombre_completo, email, password, rol } = req.body;
+      const { nombre_completo, username, email, password, rol } = req.body;
 
-      if (!nombre_completo || !email || !password) {
-        return res.status(400).json({ success: false, message: 'Datos incompletos' });
+      if (!nombre_completo || !username || !email || !password) {
+        return res.status(400).json({ success: false, message: 'Nombre completo, nombre de usuario, correo y contraseña son obligatorios' });
+      }
+
+      const cleanUsername = username.trim().toLowerCase();
+      if (!/^[a-z0-9_]{3,80}$/.test(cleanUsername)) {
+        return res.status(400).json({ success: false, message: 'El nombre de usuario solo puede contener letras minúsculas, números y guion bajo, entre 3 y 80 caracteres' });
       }
 
       if (!AuthController.validarContrasena(password)) {
@@ -162,7 +200,12 @@ class AuthController {
         return res.status(400).json({ success: false, message: 'El correo ya está registrado' });
       }
 
-      const nuevo = await UsuarioModel.create({ nombre_completo, email, password, rol: rol || 'Usuarios' });
+      const existenteUsername = await UsuarioModel.findByUsernameOrEmail(cleanUsername);
+      if (existenteUsername) {
+        return res.status(400).json({ success: false, message: 'El nombre de usuario ya está en uso' });
+      }
+
+      const nuevo = await UsuarioModel.create({ nombre_completo, username: cleanUsername, email, password, rol: rol || 'Usuarios' });
       res.status(201).json({ success: true, data: nuevo });
     } catch (error) {
       next(error);

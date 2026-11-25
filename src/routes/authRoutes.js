@@ -4,6 +4,7 @@ const AuthController = require('../controllers/AuthController');
 const { authMiddleware, requireRole } = require('../middlewares/authMiddleware');
 
 router.post('/login', AuthController.login);
+router.post('/logout', AuthController.logout);
 router.get('/me', authMiddleware, AuthController.me);
 
 router.get('/usuarios', authMiddleware, requireRole('Super Admin', 'Admin'), AuthController.listarUsuarios);

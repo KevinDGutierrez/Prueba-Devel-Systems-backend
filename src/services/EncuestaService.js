@@ -1,5 +1,6 @@
 const { getConnectionPool, sql } = require('../config/database');
 const { nanoid } = require('nanoid');
+const { encryptValue } = require('../utils/encryption');
 
 class EncuestaService {
   static async crearEncuesta({ idUsuario, titulo, descripcion, campos }) {
@@ -238,23 +239,16 @@ class EncuestaService {
         valReq.input('id_respuesta', sql.BigInt, idRespuesta);
         valReq.input('id_campo', sql.Int, campo.id_campo);
 
-        if (campo.tipo_campo === 'numero') {
-          valReq.input('valor_texto', sql.NVarChar, null);
-          valReq.input('valor_numero', sql.Decimal(18, 4), Number(val));
-          valReq.input('valor_fecha', sql.Date, null);
-        } else if (campo.tipo_campo === 'fecha') {
-          valReq.input('valor_texto', sql.NVarChar, null);
-          valReq.input('valor_numero', sql.Decimal(18, 4), null);
-          valReq.input('valor_fecha', sql.Date, new Date(val));
-        } else {
-          valReq.input('valor_texto', sql.NVarChar, String(val));
-          valReq.input('valor_numero', sql.Decimal(18, 4), null);
-          valReq.input('valor_fecha', sql.Date, null);
-        }
+        const plainToEncrypt = campo.tipo_campo === 'numero' ? Number(val) : String(val);
+        const { valor_cifrado, iv, auth_tag } = encryptValue(plainToEncrypt);
+
+        valReq.input('valor_cifrado', sql.NVarChar(sql.MAX), valor_cifrado);
+        valReq.input('iv', sql.VarChar(32), iv);
+        valReq.input('auth_tag', sql.VarChar(32), auth_tag);
 
         await valReq.query(`
-          INSERT INTO ValoresRespuesta (id_respuesta, id_campo, valor_texto, valor_numero, valor_fecha)
-          VALUES (@id_respuesta, @id_campo, @valor_texto, @valor_numero, @valor_fecha)
+          INSERT INTO ValoresRespuesta (id_respuesta, id_campo, valor_cifrado, iv, auth_tag)
+          VALUES (@id_respuesta, @id_campo, @valor_cifrado, @iv, @auth_tag)
         `);
       }
 

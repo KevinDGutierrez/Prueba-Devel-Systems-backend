@@ -37,11 +37,10 @@ BEGIN
 END
 GO
 
--- 5. Búsqueda de valores por respuesta
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ValoresRespuesta_Respuesta_Campo')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ValoresRespuesta_Campo')
 BEGIN
-    CREATE NONCLUSTERED INDEX IX_ValoresRespuesta_Respuesta_Campo
-    ON ValoresRespuesta (id_respuesta, id_campo)
-    INCLUDE (valor_texto, valor_numero, valor_fecha);
+    CREATE NONCLUSTERED INDEX IX_ValoresRespuesta_Campo
+    ON ValoresRespuesta (id_campo)
+    INCLUDE (id_respuesta, valor_cifrado, iv, auth_tag);
 END
 GO

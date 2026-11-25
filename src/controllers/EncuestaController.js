@@ -190,7 +190,7 @@ class EncuestaController {
         return res.status(400).json({ success: false, message: 'Identificador de encuesta inválido' });
       }
 
-      const eliminado = await EncuestaModel.deletePermanent(idEncuesta);
+      const eliminado = await EncuestaModel.softDelete(idEncuesta);
       if (!eliminado) {
         return res.status(404).json({ success: false, message: 'No se pudo eliminar la encuesta' });
       }
@@ -216,8 +216,11 @@ class EncuestaController {
         return res.status(404).json({ success: false, message: 'Encuesta no encontrada' });
       }
 
+      const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+      const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+
       const campos = await CampoModel.findByEncuesta(idEncuesta, false);
-      const respuestas = await RespuestaModel.findRespuestasByEncuesta(idEncuesta);
+      const { rows: respuestas, total } = await RespuestaModel.findRespuestasByEncuestaPaginated(idEncuesta, page, limit);
 
       res.json({
         success: true,
@@ -228,10 +231,16 @@ class EncuestaController {
             descripcion: encuesta.descripcion,
             estado: encuesta.estado,
             uuid_publico: encuesta.uuid_publico,
-            total_respuestas: respuestas.length
+            total_respuestas: total
           },
           campos,
-          respuestas
+          respuestas,
+          paginacion: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit) || 1
+          }
         }
       });
     } catch (error) {

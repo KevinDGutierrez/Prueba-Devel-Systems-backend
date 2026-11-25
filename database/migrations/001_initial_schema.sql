@@ -89,9 +89,9 @@ BEGIN
         id_valor BIGINT IDENTITY(1,1) PRIMARY KEY,
         id_respuesta BIGINT NOT NULL,
         id_campo INT NOT NULL,
-        valor_texto NVARCHAR(MAX) NULL,
-        valor_numero DECIMAL(18, 4) NULL,
-        valor_fecha DATE NULL,
+        valor_cifrado NVARCHAR(MAX) NOT NULL,
+        iv VARCHAR(32) NOT NULL,
+        auth_tag VARCHAR(32) NOT NULL,
         CONSTRAINT FK_ValoresRespuesta_Respuestas FOREIGN KEY (id_respuesta)
             REFERENCES Respuestas(id_respuesta) ON DELETE CASCADE,
         CONSTRAINT FK_ValoresRespuesta_CamposEncuesta FOREIGN KEY (id_campo)
