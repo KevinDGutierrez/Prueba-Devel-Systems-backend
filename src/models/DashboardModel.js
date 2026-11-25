@@ -9,7 +9,7 @@ class DashboardModel {
         (SELECT COUNT(1) FROM Encuestas WHERE estado != 'eliminada') AS total_encuestas,
         (SELECT COUNT(1) FROM Encuestas WHERE estado = 'activa') AS encuestas_activas,
         (SELECT COUNT(1) FROM Encuestas WHERE estado = 'inactiva') AS encuestas_inactivas,
-        (SELECT COUNT(1) FROM Respuestas) AS total_respuestas,
+        (SELECT COUNT(1) FROM Respuestas r INNER JOIN Encuestas e ON r.id_encuesta = e.id_encuesta WHERE e.estado != 'eliminada') AS total_respuestas,
         (SELECT COUNT(1) FROM Usuarios WHERE activo = 1) AS total_usuarios_activos
     `);
 
@@ -28,10 +28,12 @@ class DashboardModel {
 
     const responsesOverTimeRes = await pool.request().query(`
       SELECT 
-        CONVERT(VARCHAR(10), fecha_respuesta, 120) AS fecha,
+        CONVERT(VARCHAR(10), r.fecha_respuesta, 120) AS fecha,
         COUNT(1) AS cantidad
-      FROM Respuestas
-      GROUP BY CONVERT(VARCHAR(10), fecha_respuesta, 120)
+      FROM Respuestas r
+      INNER JOIN Encuestas e ON r.id_encuesta = e.id_encuesta
+      WHERE e.estado != 'eliminada'
+      GROUP BY CONVERT(VARCHAR(10), r.fecha_respuesta, 120)
       ORDER BY fecha DESC
     `);
 
@@ -60,7 +62,7 @@ class DashboardModel {
     const summaryRes = await pool.request().query(`
       SELECT 
         (SELECT COUNT(1) FROM Encuestas WHERE estado = 'activa') AS encuestas_disponibles,
-        (SELECT COUNT(1) FROM Respuestas) AS total_respuestas_globales
+        (SELECT COUNT(1) FROM Respuestas r INNER JOIN Encuestas e ON r.id_encuesta = e.id_encuesta WHERE e.estado = 'activa') AS total_respuestas_globales
     `);
 
     const activeSurveysRes = await pool.request().query(`
