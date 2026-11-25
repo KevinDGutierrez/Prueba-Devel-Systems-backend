@@ -1,0 +1,11 @@
+function errorHandler(err, req, res, next) {
+  const statusCode = err.statusCode || 500;
+  const message = err.isPublic ? err.message : 'Error interno del servidor';
+
+  res.status(statusCode).json({
+    success: false,
+    message
+  });
+}
+
+module.exports = errorHandler;
